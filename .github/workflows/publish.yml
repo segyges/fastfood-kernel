@@ -1,0 +1,71 @@
+name: Publish to PyPI
+
+# Triggers on a published GitHub release. Also manually runnable.
+#
+# Two auth options (pick one, no code change needed for Trusted Publishing):
+#
+# 1. Trusted Publishing (recommended, no secrets in repo):
+#    - Go to https://pypi.org/manage/account/publishing/
+#    - Add a "pending" trusted publisher with:
+#        PyPI project name: fastfood-kernel
+#        Owner:             segyges
+#        Repository name:   fastfood-kernel
+#        Workflow name:     publish.yml
+#        Environment name:  pypi
+#    - Create an environment called "pypi" in this repo's Settings > Environments.
+#    - Publish a GitHub release; this workflow will publish without any token.
+#
+# 2. API token fallback:
+#    - Generate a token at https://pypi.org/manage/account/token/
+#    - Add it as a repo secret named PYPI_API_TOKEN.
+#    - Uncomment the `password:` line in the publish step below.
+#    - Remove the `id-token: write` permission and the `environment:` block.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/fastfood-kernel
+    permissions:
+      id-token: write  # required for Trusted Publishing (OIDC)
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # For API-token auth, uncomment:
+        # with:
+        #   password: ${{ secrets.PYPI_API_TOKEN }}

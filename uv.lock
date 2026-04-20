@@ -81,7 +81,7 @@ nvtx = [
 ]
 
 [[package]]
-name = "fastfood"
+name = "fastfood-kernel"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
