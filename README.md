@@ -1,6 +1,6 @@
 # fastfood
 
-PyTorch implementation of the Fastfood transform from Le, Sarlós & Smola, *"Fastfood — Approximating Kernel Expansions in Loglinear Time"* (ICML 2013).
+PyTorch implementation of the Fastfood transform from Le, Sarlós & Smola, [*"Fastfood — Approximating Kernel Expansions in Loglinear Time"*](https://proceedings.mlr.press/v28/le13.html) (ICML 2013).
 
 Fastfood approximates a dense `n × d` Gaussian random matrix with the structured product
 
@@ -88,4 +88,4 @@ The FWHT is isolated in `fastfood/fwht.py` and replaceable — a custom CUDA ker
 
 ## References
 
-Quoc Le, Tamás Sarlós, Alex Smola. *Fastfood — Approximating Kernel Expansions in Loglinear Time.* ICML 2013.
+Quoc Le, Tamás Sarlós, Alex Smola. [*Fastfood — Approximating Kernel Expansions in Loglinear Time.*](https://proceedings.mlr.press/v28/le13.html) ICML 2013.
