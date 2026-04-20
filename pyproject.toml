@@ -1,18 +1,36 @@
 [project]
-name = "nbdev-workspace"
+name = "fastfood"
 version = "0.1.0"
-description = "nbdev development environment"
-requires-python = ">=3.11,<3.13"
+description = "Fastfood random-feature kernel approximation in PyTorch"
+readme = "README.md"
+authors = [
+    { name = "SE Gyges", email = "segyges@gmail.com" }
+]
+requires-python = ">=3.12"
 dependencies = [
-    "jupyterlab>=4.0.0",
-    "nbdev>=2.3.0",
-    "jupyterlab-quarto>=0.3.0",
-    "ipython>=8.12.0,<8.18.0",  # Pin IPython to avoid strip_ansi issue
+    "numpy>=2.4.4",
+    "torch>=2.11.0",
+]
+
+[project.optional-dependencies]
+benchmarks = [
+    "scikit-learn>=1.8.0",
 ]
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.10.8,<0.11.0"]
+build-backend = "uv_build"
 
-[tool.uv]
-dev-dependencies = []
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -q"
+markers = [
+    "benchmark: slower benchmark/timing test (still runs by default)",
+    "paper: reproduces a claim from the Fastfood paper",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "scikit-learn>=1.8.0",
+]
