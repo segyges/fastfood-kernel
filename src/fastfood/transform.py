@@ -66,6 +66,7 @@ class Fastfood(nn.Module):
         trainable: bool = False,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
+        compile: bool | dict = True,
     ) -> None:
         super().__init__()
         if in_features <= 0 or out_features <= 0:
@@ -122,58 +123,54 @@ class Fastfood(nn.Module):
             self.register_buffer("G", G)
             self.register_buffer("S", S)
 
+        self._compiled_core = None
+        if compile:
+            opts = compile if isinstance(compile, dict) else {}
+            self._compiled_core = torch.compile(self._core, **opts)
+
     def extra_repr(self) -> str:
         return (
             f"in_features={self.in_features}, out_features={self.out_features}, "
             f"sigma={self.sigma}, d={self.d}, n_blocks={self.n_blocks}"
         )
 
-    def forward(self, x: Tensor) -> Tensor:
-        if x.shape[-1] != self.in_features:
-            raise ValueError(
-                f"expected last dim {self.in_features}, got {x.shape[-1]}"
-            )
+    def _core(self, x: Tensor) -> Tensor:
         lead = x.shape[:-1]
         d, n_blocks = self.d, self.n_blocks
 
-        # Zero-pad to d.
         if self.in_features < d:
             pad = x.new_zeros(*lead, d - self.in_features)
             x = torch.cat((x, pad), dim=-1)
 
-        # Broadcast to (..., n_blocks, d).
         x = x.unsqueeze(-2).expand(*lead, n_blocks, d)
 
-        # Step 1: B * x (sign flip)
         x = x * self.B
-
-        # Step 2: FWHT
         x = _fwht_module.fwht(x)
 
-        # Step 3: permute along last dim per block
         pi = self.Pi
         for _ in range(len(lead)):
             pi = pi.unsqueeze(0)
         pi = pi.expand(*lead, n_blocks, d)
         x = torch.gather(x, -1, pi)
 
-        # Step 4: G * x
         x = x * self.G
-
-        # Step 5: FWHT
         x = _fwht_module.fwht(x)
-
-        # Step 6: S * x
         x = x * self.S
-
-        # Step 7: scale by 1 / (sigma * sqrt(d))
         x = x / (self.sigma * math.sqrt(d))
 
-        # Flatten blocks and slice to out_features.
         x = x.reshape(*lead, n_blocks * d)
         if x.shape[-1] != self.out_features:
             x = x[..., : self.out_features]
         return x
+
+    def forward(self, x: Tensor) -> Tensor:
+        if x.shape[-1] != self.in_features:
+            raise ValueError(
+                f"expected last dim {self.in_features}, got {x.shape[-1]}"
+            )
+        if self._compiled_core is not None:
+            return self._compiled_core(x)
+        return self._core(x)
 
     def weight_matrix(self) -> Tensor:
         """Return the explicit ``(out_features, in_features)`` projection.

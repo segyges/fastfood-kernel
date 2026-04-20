@@ -1,20 +1,14 @@
 # fastfood
 
-PyTorch implementation of the Fastfood transform from Le, Sarlós & Smola,
-*"Fastfood — Approximating Kernel Expansions in Loglinear Time"* (ICML 2013).
+PyTorch implementation of the Fastfood transform from Le, Sarlós & Smola, *"Fastfood — Approximating Kernel Expansions in Loglinear Time"* (ICML 2013).
 
-Fastfood approximates a dense `n × d` Gaussian random matrix with the structured
-product
+Fastfood approximates a dense `n × d` Gaussian random matrix with the structured product
 
 ```
 V = (1 / (σ √d)) · S · H · G · Π · H · B
 ```
 
-where `H` is the Hadamard matrix, `B` is random ±1 diagonal, `Π` is a random
-permutation, and `G`, `S` are random diagonals drawn from Gaussian and
-chi distributions respectively. Applying `V` to a vector costs
-`O(d log d)` time and `O(d)` memory instead of the naive `O(n · d)` — which
-lets kernel random features scale to very high feature counts.
+where `H` is the Hadamard matrix, `B` is random ±1 diagonal, `Π` is a random permutation, and `G`, `S` are random diagonals drawn from Gaussian and chi distributions respectively. Applying `V` to a vector costs `O(d log d)` time and `O(d)` memory instead of the naive `O(n · d)` — which lets kernel random features scale to very high feature counts.
 
 ## Install
 
@@ -22,8 +16,7 @@ lets kernel random features scale to very high feature counts.
 uv sync
 ```
 
-For GPU you need a CUDA-matched `torch` wheel; `uv sync` will install CPU
-torch by default.
+For GPU you need a CUDA-matched `torch` wheel; `uv sync` will install CPU torch by default.
 
 ## Quickstart
 
@@ -42,19 +35,16 @@ features = rbf(x)    # (32, 4096)
 K_approx = features @ features.T  # approximates the Gaussian kernel matrix
 ```
 
-`Fastfood` is a standard `nn.Module` — buffers move with `.to(device)`,
-`state_dict()` round-trips, and `trainable=True` exposes `G` and `S` as
-parameters for end-to-end training.
+`Fastfood` is a standard `nn.Module` — buffers move with `.to(device)`, `state_dict()` round-trips, and `trainable=True` exposes `G` and `S` as parameters for end-to-end training.
 
 ## API
 
-- `fastfood.Fastfood(in_features, out_features, sigma=1.0, *, seed=None, trainable=False, device=None, dtype=None)` — the raw Fastfood projection.
+- `fastfood.Fastfood(in_features, out_features, sigma=1.0, *, seed=None, trainable=False, device=None, dtype=None, compile=True)` — the raw Fastfood projection. `compile=True` (default) wraps the forward in `torch.compile`; pass `compile=False` to skip JIT, or pass a dict of `torch.compile` options.
 - `fastfood.RBFSampler(...)` — Rahimi-Recht random-phase cosine features.
 - `fastfood.RBFSinCosSampler(...)` — concatenated sin/cos features (no bias; lower variance at equal parameter budget, but 2× the output dim).
-- `fastfood.fwht.fwht(x)` / `fastfood.fwht.fwht_ortho(x)` — batched Fast Walsh-Hadamard Transform along the last axis. The `Fastfood` module calls into `fastfood.fwht.fwht` by name, so replacing the attribute (e.g. `fastfood.fwht.fwht = my_cuda_fwht`) is sufficient to swap in a custom CUDA kernel globally.
+- `fastfood.fwht.fwht(x)` / `fastfood.fwht.fwht_ortho(x)` — batched Fast Walsh-Hadamard Transform along the last axis. Auto-dispatches to a Triton kernel on CUDA (when Triton is importable) and the pure-PyTorch butterfly otherwise. `fastfood.fwht.fwht_eager(x)` forces the PyTorch path. The `Fastfood` module calls into `fastfood.fwht.fwht` by name, so replacing the attribute (e.g. `fastfood.fwht.fwht = my_cuda_fwht`) is sufficient to swap in a custom kernel globally — do this before the first forward if you also have `compile=True`, since the compiled graph captures the callee at trace time.
 
-Input dimensions that aren't a power of two are zero-padded internally to the
-next power of two.
+Input dimensions that aren't a power of two are zero-padded internally to the next power of two.
 
 ## Testing
 
@@ -64,33 +54,38 @@ uv run pytest
 
 The tests cover four areas:
 
-1. **FWHT correctness** (`test_fwht.py`) — matches an explicit Hadamard
-   matrix, is its own inverse up to scale, handles arbitrary batch shapes.
-2. **Fastfood shape / determinism / statistics** (`test_transform.py`) —
-   `V` entries have variance `1/σ²`, linearity holds, seeding is
-   reproducible, `state_dict` round-trips.
-3. **NumPy parity** (`test_numpy_parity.py`) — the torch forward matches
-   a pure-NumPy oracle to float32 precision when the parameter buffers are
-   identical.
-4. **Paper reproduction** (`test_benchmarks.py`) — per-entry kernel MSE
-   matches explicit random kitchen sinks, convergence is `O(1/n)`, ridge
-   regression predictions agree between Fastfood and RKS, and digit
-   classification on `sklearn.datasets.load_digits` gets ~98 % accuracy
-   (the paper reports ~97 % on USPS).
+1. **FWHT correctness** (`test_fwht.py`) — matches an explicit Hadamard matrix, is its own inverse up to scale, handles arbitrary batch shapes.
+2. **Fastfood shape / determinism / statistics** (`test_transform.py`) — `V` entries have variance `1/σ²`, linearity holds, seeding is reproducible, `state_dict` round-trips.
+3. **NumPy parity** (`test_numpy_parity.py`) — the torch forward matches a pure-NumPy oracle to float32 precision when the parameter buffers are identical.
+4. **Paper reproduction** (`test_benchmarks.py`) — per-entry kernel MSE matches explicit random kitchen sinks, convergence is `O(1/n)`, ridge regression predictions agree between Fastfood and RKS, and digit classification on `sklearn.datasets.load_digits` gets ~98 % accuracy (the paper reports ~97 % on USPS).
 
 Run only the paper-reproduction tests with `uv run pytest -m paper`.
 
 ## Performance
 
-Current FWHT is a pure-PyTorch butterfly, which is GPU-compatible but not
-optimal. Because `torch.matmul` is extremely well-tuned, dense RKS can beat
-Fastfood on CPU at moderate sizes. The scaling advantage appears at very
-large `d` (and on GPU where matmul memory bandwidth dominates).
+Two opt-in accelerations ship on by default:
 
-The FWHT is isolated in `fastfood/fwht.py` and replaceable — a custom CUDA
-kernel can be dropped in there without touching the rest of the library.
+1. **Triton FWHT** (`fastfood/fwht_triton.py`) — a one-program-per-row butterfly in registers using `reshape/permute/split/join`. Used automatically on CUDA whenever `triton` can be imported (Triton ships with modern `torch`, so this is usually transparent).
+2. **`torch.compile`** — the whole `Fastfood.forward` is wrapped in `torch.compile`, fusing the B/G/S multiplies, permutation, and FWHTs.
+
+On an RTX 3080, batch 256, float32 (`uv run python scripts/bench.py`):
+
+| size (in → out) | eager | +compile | +triton | compile+triton |
+|---|---|---|---|---|
+| 64 → 4096 | 0.572 ms | 0.207 ms (2.77×) | 0.135 ms (4.23×) | **0.101 ms (5.66×)** |
+| 256 → 16384 | 2.676 ms | 0.727 ms (3.68×) | 0.375 ms (7.13×) | **0.288 ms (9.29×)** |
+| 1024 → 65536 | 12.625 ms | 3.244 ms (3.89×) | 1.394 ms (9.06×) | **0.997 ms (12.66×)** |
+
+**JIT cost** (paid once per unique shape, then cached):
+
+- First `torch.compile` call in a fresh Python process: ~5–8 s (Inductor + Triton runtime warm-up).
+- Subsequent `torch.compile` calls in the same process: ~200–800 ms.
+- Triton FWHT kernel compile: ~60–220 ms per unique `d`, cached on disk in `~/.triton/cache`.
+
+Pass `compile=False` to `Fastfood(...)` to skip JIT if you only run a few forwards. The Triton backend still kicks in on CUDA; disable it by setting `fastfood.fwht.fwht = fastfood.fwht.fwht_eager` before constructing the module.
+
+The FWHT is isolated in `fastfood/fwht.py` and replaceable — a custom CUDA kernel can be dropped in there without touching the rest of the library.
 
 ## References
 
-Quoc Le, Tamás Sarlós, Alex Smola. *Fastfood — Approximating Kernel
-Expansions in Loglinear Time.* ICML 2013.
+Quoc Le, Tamás Sarlós, Alex Smola. *Fastfood — Approximating Kernel Expansions in Loglinear Time.* ICML 2013.
