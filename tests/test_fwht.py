@@ -80,3 +80,44 @@ def test_fwht_preserves_dtype_and_device():
     for dt in (torch.float32, torch.float64):
         x = torch.randn(8, dtype=dt)
         assert fwht(x).dtype == dt
+
+
+# ---------------------------------------------------------------------------
+# Autograd: the transform is self-adjoint (H symmetric, H @ H = d I), so
+# backward is fwht(grad_output). Regression guard for a bug where the
+# Triton backend silently detached the autograd graph on CUDA.
+# ---------------------------------------------------------------------------
+
+
+def _assert_fwht_backward(device: str) -> None:
+    torch.manual_seed(0)
+    d = 64
+    x = torch.randn(3, d, device=device, requires_grad=True)
+    y = fwht(x)
+    assert y.requires_grad, "fwht output should require grad"
+    assert y.grad_fn is not None, "fwht output should have a grad_fn"
+
+    # Analytic backward: grad_x = grad_y @ H = fwht(grad_y).
+    grad_out = torch.randn_like(y)
+    (grad_x,) = torch.autograd.grad(y, x, grad_out)
+
+    # Reference on CPU via the dense Hadamard matrix.
+    H = _hadamard_matrix(d).to(device=device, dtype=grad_out.dtype)
+    expected = grad_out @ H  # H is symmetric, so H.T == H.
+    assert torch.allclose(grad_x, expected, atol=1e-4, rtol=1e-5)
+
+
+def test_fwht_backward_cpu():
+    _assert_fwht_backward("cpu")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA")
+def test_fwht_backward_cuda():
+    _assert_fwht_backward("cuda")
+
+
+def test_fwht_gradcheck_cpu():
+    torch.manual_seed(0)
+    d = 16
+    x = torch.randn(2, d, dtype=torch.float64, requires_grad=True)
+    assert torch.autograd.gradcheck(fwht, (x,), eps=1e-6, atol=1e-5)

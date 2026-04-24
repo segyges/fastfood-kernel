@@ -63,15 +63,47 @@ except Exception:
     _TRITON_AVAILABLE = False
 
 
+def _fwht_dispatch(x: Tensor) -> Tensor:
+    """Dispatch to Triton on CUDA, eager elsewhere. No autograd wrapping."""
+    if _TRITON_AVAILABLE and x.is_cuda:
+        return _fwht_triton(x)
+    return fwht_eager(x)
+
+
+class _FWHTFunction(torch.autograd.Function):
+    """Autograd rule for the unnormalized FWHT.
+
+    The Hadamard matrix H is symmetric (H == H.T) and satisfies H @ H == d I,
+    so fwht(x) = x @ H has Jacobian H w.r.t. x. The backward is therefore
+    grad_x = grad_y @ H = fwht(grad_y). The transform is self-adjoint.
+
+    This wrapper exists because the Triton backend is an opaque custom op
+    with no registered autograd rule; without it, calling fwht on CUDA
+    silently detaches the autograd graph. The eager butterfly on CPU is
+    already differentiable via standard torch ops, but we route it through
+    the same rule for consistency and to save a tape of intermediate ops.
+    """
+
+    @staticmethod
+    def forward(ctx, x: Tensor) -> Tensor:
+        return _fwht_dispatch(x)
+
+    @staticmethod
+    def backward(ctx, grad_output: Tensor) -> Tensor:
+        # Self-adjoint: d/dx fwht(x) = H, so grad_x = fwht(grad_output).
+        return _fwht_dispatch(grad_output.contiguous())
+
+
 def fwht(x: Tensor) -> Tensor:
     """Unnormalized FWHT along the last axis.
 
     Dispatches to the Triton kernel on CUDA when available, otherwise the
     pure-PyTorch butterfly. The last dimension must be a power of two.
+
+    Differentiable on both CPU and CUDA: the transform is self-adjoint
+    (H is symmetric), so the backward is ``fwht(grad_output)``.
     """
-    if _TRITON_AVAILABLE and x.is_cuda:
-        return _fwht_triton(x)
-    return fwht_eager(x)
+    return _FWHTFunction.apply(x)
 
 
 def fwht_ortho(x: Tensor) -> Tensor:
